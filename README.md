@@ -48,6 +48,15 @@ On first server start, BepInEx creates `BepInEx/config/Dorn.PoVHallsChests.cfg`.
 - `Filter scope`: choose `AllEquipment`, `WeaponsOnly`, `ArmorOnly`, or `WeaponsAndArmor`.
 - `Log removed items`: writes removed item prefab names to the server log for validation.
 
+### Empty reward replacement
+
+By default, `Replace empty rolls` is enabled. If every item in one Halls reward roll is removed as equipment, PoV Halls Chests adds one replacement instead of leaving that roll empty:
+
+- A PoV currency, according to `Currency replacement chance` (default: `0.50`); or
+- A material appropriate to the Hall progression level.
+
+The replacement is only created when equipment removal would otherwise leave that individual roll empty. Existing non-equipment rewards are never replaced or increased.
+
 The default is `AllEquipment`, which removes every equipment type while preserving currencies, runes, gems, and materials.
 
 ## Required PoV settings

@@ -1,5 +1,11 @@
 # Changelog
 
+## 1.0.2
+
+- Replaces a Halls reward only when equipment filtering would leave that roll empty.
+- Added tier-appropriate material replacements and optional Path of Valheiman currency replacements.
+- Added replacement configuration options.
+
 ## 1.0.1
 
 - Added the automatically generated `Dorn.PoVHallsChests.cfg` server configuration file.

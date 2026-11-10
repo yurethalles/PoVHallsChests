@@ -21,12 +21,14 @@ public sealed class Plugin : BaseUnityPlugin
 {
     public const string PluginGuid = "Dorn.PoVHallsChests";
     public const string PluginName = "PoV Halls Chests";
-    public const string PluginVersion = "1.0.1";
+    public const string PluginVersion = "1.0.2";
 
     internal static ManualLogSource Log;
     internal static ConfigEntry<bool> Enabled;
     internal static ConfigEntry<EquipmentFilterScope> FilterScope;
     internal static ConfigEntry<bool> LogRemovedItems;
+    internal static ConfigEntry<bool> ReplaceEmptyRolls;
+    internal static ConfigEntry<float> CurrencyReplacementChance;
 
     private void Awake()
     {
@@ -62,6 +64,18 @@ public sealed class Plugin : BaseUnityPlugin
             "Log removed items",
             false,
             "Logs the prefab names and total count of equipment removed from each Halls reward roll.");
+
+        ReplaceEmptyRolls = Config.Bind(
+            "Replacement",
+            "Replace empty rolls",
+            true,
+            "When every item in a Halls reward roll was removed as equipment, add one tier-appropriate currency or material reward.");
+
+        CurrencyReplacementChance = Config.Bind(
+            "Replacement",
+            "Currency replacement chance",
+            0.50f,
+            new ConfigDescription("Chance that an empty Halls roll is replaced with a Path of Valheiman currency. Otherwise it receives a tier-appropriate material.", new AcceptableValueRange<float>(0f, 1f)));
     }
 }
 
@@ -81,6 +95,8 @@ internal static class HallsMaterializePatch
     private static MethodInfo _isJewel;
     private static MethodInfo _isCurrency;
     private static MethodInfo _hallsAt;
+    private static MethodInfo _currencyFor;
+    private static MethodInfo _materialize;
     private static bool _resolved;
 
     private static MethodBase TargetMethod()
@@ -113,6 +129,19 @@ internal static class HallsMaterializePatch
                 Plugin.Log.LogInfo($"Removed {removed} Halls equipment reward(s): {string.Join(", ", removedPrefabs)}");
             else
                 Plugin.Log.LogDebug($"Removed {removed} equipment reward(s) from a Halls of Oaths roll.");
+
+            if (__result.Count == 0 && Plugin.ReplaceEmptyRolls.Value)
+            {
+                var replacement = CreateReplacement(__0, removed);
+                if (replacement.Count > 0)
+                {
+                    __result.AddRange(replacement);
+                    if (Plugin.LogRemovedItems.Value)
+                        Plugin.Log.LogInfo($"Added empty-roll replacement: {string.Join(", ", replacement.ConvertAll(ItemName))}");
+                }
+                else
+                    Plugin.Log.LogWarning("A Halls roll became empty after equipment filtering, but no replacement could be created.");
+            }
         }
     }
 
@@ -186,6 +215,99 @@ internal static class HallsMaterializePatch
         }
     }
 
+    private static List<ItemDrop.ItemData> CreateReplacement(object context, int removedCount)
+    {
+        var eventId = ReadString(context, "EventId") ?? "pov-halls";
+        var random = new Random(StableSeed(eventId, removedCount));
+        var currencyChance = Math.Max(0f, Math.Min(1f, Plugin.CurrencyReplacementChance.Value));
+
+        if (random.NextDouble() < currencyChance)
+        {
+            var currency = TryCreateCurrency(context, random);
+            if (currency.Count > 0)
+                return currency;
+        }
+
+        var material = TryCreateTierMaterial(context, random);
+        if (material != null)
+            return new List<ItemDrop.ItemData> { material };
+
+        // Currency is a safer final fallback than leaving a filtered Hall reward empty.
+        return TryCreateCurrency(context, random);
+    }
+
+    private static List<ItemDrop.ItemData> TryCreateCurrency(object context, Random random)
+    {
+        try
+        {
+            ResolvePoVMethods();
+            if (_currencyFor == null || _materialize == null)
+                return new List<ItemDrop.ItemData>();
+
+            var reward = _currencyFor.Invoke(null, new object[] { context, random });
+            if (reward == null)
+                return new List<ItemDrop.ItemData>();
+
+            var rewards = (IList)Activator.CreateInstance(typeof(List<>).MakeGenericType(reward.GetType()));
+            rewards.Add(reward);
+            var materialized = _materialize.Invoke(null, new object[] { context, rewards, random }) as List<ItemDrop.ItemData>;
+            return materialized ?? new List<ItemDrop.ItemData>();
+        }
+        catch (Exception exception)
+        {
+            Plugin.Log.LogWarning($"Could not create PoV currency replacement: {exception.Message}");
+            return new List<ItemDrop.ItemData>();
+        }
+    }
+
+    private static ItemDrop.ItemData TryCreateTierMaterial(object context, Random random)
+    {
+        var level = ReadInt(context, "Level", 1);
+        string prefab;
+        int min;
+        int max;
+
+        if (level >= 181) { prefab = "FlametalOreNew"; min = 3; max = 6; }
+        else if (level >= 97) { prefab = "BlackMetalScrap"; min = 4; max = 8; }
+        else if (level >= 77) { prefab = "SilverOre"; min = 4; max = 8; }
+        else if (level >= 43) { prefab = "IronScrap"; min = 4; max = 8; }
+        else if (random.Next(2) == 0) { prefab = "CopperOre"; min = 5; max = 9; }
+        else { prefab = "TinOre"; min = 4; max = 8; }
+
+        try
+        {
+            var itemPrefab = ObjectDB.instance == null ? null : ObjectDB.instance.GetItemPrefab(prefab);
+            var itemDrop = itemPrefab == null ? null : itemPrefab.GetComponent<ItemDrop>();
+            if (itemDrop == null || itemDrop.m_itemData == null)
+                return null;
+
+            var item = itemDrop.m_itemData.Clone();
+            item.m_stack = random.Next(min, max + 1);
+            return item;
+        }
+        catch (Exception exception)
+        {
+            Plugin.Log.LogWarning($"Could not create tier material replacement {prefab}: {exception.Message}");
+            return null;
+        }
+    }
+
+    private static int StableSeed(string eventId, int removedCount)
+    {
+        unchecked
+        {
+            var hash = 17;
+            foreach (var character in eventId)
+                hash = hash * 31 + character;
+            return hash * 31 + removedCount;
+        }
+    }
+
+    private static string ItemName(ItemDrop.ItemData item)
+    {
+        return item == null || item.m_dropPrefab == null ? "unknown" : item.m_dropPrefab.name;
+    }
+
     private static void ResolvePoVMethods()
     {
         if (_resolved)
@@ -196,14 +318,24 @@ internal static class HallsMaterializePatch
         _isJewel = FindStatic("Jewels", "Is");
         _isCurrency = FindStatic("Runes", "IsCurrency");
 
+        var lootDrops = FindType("LootDrops");
+        _currencyFor = FindStatic("LootDrops", "CurrencyFor", 2);
+        _materialize = lootDrops == null ? null : AccessTools.Method(lootDrops, "Materialize");
+
         var hallsRun = FindType("HallsRun");
         _hallsAt = hallsRun == null ? null : AccessTools.Method(hallsRun, "At");
     }
 
-    private static MethodInfo FindStatic(string typeSuffix, string methodName)
+    private static MethodInfo FindStatic(string typeSuffix, string methodName, int parameterCount = -1)
     {
         var type = FindType(typeSuffix);
-        return type == null ? null : type.GetMethod(methodName, AnyStatic);
+        if (type == null)
+            return null;
+
+        foreach (var method in type.GetMethods(AnyStatic))
+            if (method.Name == methodName && (parameterCount < 0 || method.GetParameters().Length == parameterCount))
+                return method;
+        return null;
     }
 
     private static Type FindType(string simpleName)
@@ -233,5 +365,11 @@ internal static class HallsMaterializePatch
     }
 
     private static string ReadString(object instance, string memberName) { return ReadMember(instance, memberName) as string; }
+
+    private static int ReadInt(object instance, string memberName, int fallback)
+    {
+        var value = ReadMember(instance, memberName);
+        return value is int integer ? integer : fallback;
+    }
 }
 }

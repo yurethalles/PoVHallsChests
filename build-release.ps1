@@ -7,7 +7,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 $projectRoot = $PSScriptRoot
-$version = "1.0.1"
+$version = "1.0.2"
 $assemblyName = "PoVHallsChests"
 $packageName = "PoV-Halls-Chests-$version"
 $releaseRoot = Join-Path $projectRoot "release"
