@@ -40,6 +40,16 @@ The filter covers Halls chest, trial, breakable, and encounter/boss reward rolls
 
 This mod is server-side. Players do **not** need to install it for the filter to work.
 
+## Configuration
+
+On first server start, BepInEx creates `BepInEx/config/Dorn.PoVHallsChests.cfg`.
+
+- `Enabled`: turns the Halls reward filter on or off.
+- `Filter scope`: choose `AllEquipment`, `WeaponsOnly`, `ArmorOnly`, or `WeaponsAndArmor`.
+- `Log removed items`: writes removed item prefab names to the server log for validation.
+
+The default is `AllEquipment`, which removes every equipment type while preserving currencies, runes, gems, and materials.
+
 ## Required PoV settings
 
 Keep these Path of Valheiman settings disabled to block its normal equipment-loot routes as well:

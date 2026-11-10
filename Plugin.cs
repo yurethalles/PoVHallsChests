@@ -3,6 +3,7 @@ using System.Collections;
 using System.Collections.Generic;
 using System.Reflection;
 using BepInEx;
+using BepInEx.Configuration;
 using BepInEx.Logging;
 using HarmonyLib;
 
@@ -20,13 +21,17 @@ public sealed class Plugin : BaseUnityPlugin
 {
     public const string PluginGuid = "Dorn.PoVHallsChests";
     public const string PluginName = "PoV Halls Chests";
-    public const string PluginVersion = "1.0.0";
+    public const string PluginVersion = "1.0.1";
 
     internal static ManualLogSource Log;
+    internal static ConfigEntry<bool> Enabled;
+    internal static ConfigEntry<EquipmentFilterScope> FilterScope;
+    internal static ConfigEntry<bool> LogRemovedItems;
 
     private void Awake()
     {
         Log = Logger;
+        BindConfiguration();
         try
         {
             new Harmony(PluginGuid).PatchAll(typeof(Plugin).Assembly);
@@ -37,6 +42,35 @@ public sealed class Plugin : BaseUnityPlugin
             Logger.LogError($"Could not install Path of Valheiman compatibility filter: {exception}");
         }
     }
+
+    private void BindConfiguration()
+    {
+        Enabled = Config.Bind(
+            "General",
+            "Enabled",
+            true,
+            "When enabled, filters selected equipment from Path of Valheiman Halls of Oaths rewards.");
+
+        FilterScope = Config.Bind(
+            "General",
+            "Filter scope",
+            EquipmentFilterScope.AllEquipment,
+            "Selects which equipment types are removed: AllEquipment, WeaponsOnly, ArmorOnly, or WeaponsAndArmor.");
+
+        LogRemovedItems = Config.Bind(
+            "Debug",
+            "Log removed items",
+            false,
+            "Logs the prefab names and total count of equipment removed from each Halls reward roll.");
+    }
+}
+
+public enum EquipmentFilterScope
+{
+    AllEquipment,
+    WeaponsOnly,
+    ArmorOnly,
+    WeaponsAndArmor
 }
 
 [HarmonyPatch]
@@ -61,7 +95,7 @@ internal static class HallsMaterializePatch
 
     private static void Postfix(object __0, ref List<ItemDrop.ItemData> __result)
     {
-        if (__result == null || __result.Count == 0 || !IsHallsContext(__0))
+        if (!Plugin.Enabled.Value || __result == null || __result.Count == 0 || !IsHallsContext(__0))
             return;
 
         ResolvePoVMethods();
@@ -71,9 +105,15 @@ internal static class HallsMaterializePatch
             return;
         }
 
-        var removed = __result.RemoveAll(IsEquipment);
+        var removedPrefabs = new List<string>();
+        var removed = __result.RemoveAll(item => ShouldRemove(item, removedPrefabs));
         if (removed > 0)
-            Plugin.Log.LogDebug($"Removed {removed} equipment reward(s) from a Halls of Oaths roll.");
+        {
+            if (Plugin.LogRemovedItems.Value)
+                Plugin.Log.LogInfo($"Removed {removed} Halls equipment reward(s): {string.Join(", ", removedPrefabs)}");
+            else
+                Plugin.Log.LogDebug($"Removed {removed} equipment reward(s) from a Halls of Oaths roll.");
+        }
     }
 
     private static bool IsHallsContext(object context)
@@ -95,7 +135,7 @@ internal static class HallsMaterializePatch
         catch { return false; }
     }
 
-    private static bool IsEquipment(ItemDrop.ItemData item)
+    private static bool ShouldRemove(ItemDrop.ItemData item, List<string> removedPrefabs)
     {
         try
         {
@@ -106,12 +146,43 @@ internal static class HallsMaterializePatch
             // PoV's own gear predicate preserves jewels and runic currencies.
             var isJewel = (bool)(_isJewel.Invoke(null, new object[] { item }) ?? false);
             var isCurrency = (bool)(_isCurrency.Invoke(null, new object[] { item }) ?? false);
-            return !isJewel && !isCurrency;
+            if (isJewel || isCurrency || !MatchesScope(item))
+                return false;
+
+            if (Plugin.LogRemovedItems.Value)
+                removedPrefabs.Add(item.m_dropPrefab == null ? item.m_shared.m_name : item.m_dropPrefab.name);
+            return true;
         }
         catch (Exception exception)
         {
             Plugin.Log.LogWarning($"Could not classify a Halls reward: {exception.Message}");
             return false;
+        }
+    }
+
+    private static bool MatchesScope(ItemDrop.ItemData item)
+    {
+        var itemType = item.m_shared.m_itemType;
+        var isWeapon = itemType == ItemDrop.ItemData.ItemType.OneHandedWeapon
+            || itemType == ItemDrop.ItemData.ItemType.TwoHandedWeapon
+            || itemType == ItemDrop.ItemData.ItemType.TwoHandedWeaponLeft
+            || itemType == ItemDrop.ItemData.ItemType.Bow
+            || itemType == ItemDrop.ItemData.ItemType.Torch;
+        var isArmor = itemType == ItemDrop.ItemData.ItemType.Helmet
+            || itemType == ItemDrop.ItemData.ItemType.Chest
+            || itemType == ItemDrop.ItemData.ItemType.Legs
+            || itemType == ItemDrop.ItemData.ItemType.Shoulder;
+
+        switch (Plugin.FilterScope.Value)
+        {
+            case EquipmentFilterScope.WeaponsOnly:
+                return isWeapon;
+            case EquipmentFilterScope.ArmorOnly:
+                return isArmor;
+            case EquipmentFilterScope.WeaponsAndArmor:
+                return isWeapon || isArmor;
+            default:
+                return true;
         }
     }
 

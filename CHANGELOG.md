@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.0.1
+
+- Added the automatically generated `Dorn.PoVHallsChests.cfg` server configuration file.
+- Added `Enabled`, `Filter scope`, and `Log removed items` options.
+
 ## 1.0.0
 
 - First public release.
