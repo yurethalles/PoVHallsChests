@@ -1,0 +1,10 @@
+{
+  "name": "PoVHallsChests",
+  "version_number": "1.0.0",
+  "website_url": "",
+  "description": "Server-side Path of Valheiman fix that removes equipment from Halls of Oaths chest and reward rolls while preserving currencies, runes, gems, and materials.",
+  "dependencies": [
+    "denikson-BepInExPack_Valheim-5.4.2360",
+    "treextr-PathOfValheiman-6.0.6"
+  ]
+}
